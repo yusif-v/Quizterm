@@ -1,0 +1,35 @@
+{
+  "title": "Quizterm Demo",
+  "questions": [
+    {
+      "id": "math-q1",
+      "chapter": "math",
+      "chapter_title": "Arithmetic",
+      "number": 1,
+      "question": "What is 2 + 2?",
+      "options": {"A": "3", "B": "4", "C": "5", "D": "22"},
+      "correct": "B",
+      "explanation": "Basic addition: 2 + 2 = 4."
+    },
+    {
+      "id": "math-q2",
+      "chapter": "math",
+      "chapter_title": "Arithmetic",
+      "number": 2,
+      "question": "What is 9 × 7?",
+      "options": {"A": "56", "B": "63", "C": "72", "D": "81"},
+      "correct": "B",
+      "explanation": "9 × 7 = 63. Easy mnemonic: 7 × 9 = (10 × 7) − 7 = 63."
+    },
+    {
+      "id": "geo-q1",
+      "chapter": "geo",
+      "chapter_title": "Geography",
+      "number": 1,
+      "question": "Which is the largest ocean?",
+      "options": {"A": "Atlantic", "B": "Indian", "C": "Arctic", "D": "Pacific"},
+      "correct": "D",
+      "explanation": "The Pacific is by far the largest, covering about 30% of Earth's surface."
+    }
+  ]
+}
