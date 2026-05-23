@@ -5,3 +5,4 @@ __pycache__/
 
 # Personal quiz data (questions + history) — never publish
 quizzes/
+examples/*.history.json
