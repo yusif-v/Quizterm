@@ -3,8 +3,7 @@
 Exam-agnostic terminal quiz bot. Loads any compatible JSON file of
 multiple-choice questions and drills you on them with a colored TUI.
 
-Built originally for CompTIA SecAI+ exam prep, but designed to work with
-any certification, exam, or self-study set.
+Works with any certification, exam, or self-study question set.
 
 ## Features
 
@@ -33,7 +32,7 @@ Drop one or more `<name>.json` files into `quizzes/`, then:
 
 ```bash
 ./quizterm                  # auto-picks if one file, otherwise prompts
-./quizterm secai            # loads quizzes/secai.json
+./quizterm my-exam          # loads quizzes/my-exam.json
 ./quizterm /abs/path.json   # any external path works too
 ```
 
@@ -104,6 +103,6 @@ Quizterm/
 ├── examples/
 │   └── sample.json    # tiny demo set (tracked)
 └── quizzes/           # YOUR quiz files + history (gitignored)
-    ├── secai.json
-    └── secai.history.json
+    ├── my-exam.json
+    └── my-exam.history.json
 ```
