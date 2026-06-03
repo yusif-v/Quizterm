@@ -349,8 +349,11 @@ def ask_question(q: dict, idx: int, total: int):
 
     option_keys = sorted(q["options"].keys())
     options = [(k, q["options"][k]) for k in option_keys]
+    options.append(("q", "Quit"))
 
     sel = arrow_select(options)
+    if sel == len(option_keys):
+        return "QUIT"
     return option_keys[sel]
 
 
@@ -393,6 +396,8 @@ def run_quiz(questions: list[dict], history: dict, history_path: Path):
 
     for i, q in enumerate(questions, 1):
         ans = ask_question(q, i, total)
+        if ans == "QUIT":
+            break
         if feedback(q, ans):
             correct_n += 1
             history[q["id"]] = "correct"
