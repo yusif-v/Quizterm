@@ -346,12 +346,14 @@ def build_minimap(questions: list[dict], history: dict, current_idx: int,
     if n == 0:
         return []
 
-    # Minimap dimensions
-    map_width = min(20, max(12, (term_cols // 6)))  # ~1/6 of terminal width
-    # Reserve rows: top border + grid rows + bottom border + progress bar (2 lines)
-    available_rows = max(4, term_rows - 6)  # leave room for header/prompt at top
-    cols = max(1, map_width - 2)           # inner width (minus borders)
-    rows = max(1, available_rows - 4)      # inner height (minus borders + progress)
+    # Minimap dimensions — compact, fixed max height
+    max_grid_rows = min(12, max(4, term_rows // 3))  # cap at 12 rows
+    cols = max(1, int(n / max_grid_rows) + (1 if n % max_grid_rows else 0))  # ceil(n / rows)
+    cols = min(cols, (term_cols // 4) - 2)  # don't exceed ~1/4 terminal width
+    cols = max(8, cols)
+    rows = max(1, int(n / cols) + (1 if n % cols else 0))  # actual rows needed
+    # Trim rows to what we actually fill (no empty rows at bottom)
+    rows = min(rows, max_grid_rows)
 
     # Calculate grid layout: fill columns first, then rows
     cells_per_page = rows * cols
