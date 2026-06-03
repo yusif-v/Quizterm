@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Quizterm — exam-agnostic terminal quiz bot.  v0.3.2
+"""Quizterm — exam-agnostic terminal quiz bot.  v0.3.1
 
 Usage:
     quizterm                       # loads ./questions.json
@@ -334,108 +334,19 @@ def arrow_select(options: list[tuple[str, str]]) -> int:
             return -1  # quit sentinel
 
 
-def build_minimap_rich(questions: list[dict], history: dict, current_idx: int) -> Table | None:
-    """Build the minimap sidebar as a Rich Table.
-
-    Compact grid of question statuses + progress bar + legend.
-    """
-    n = len(questions)
-    if n == 0:
-        return None
-
-    # Grid sizing: compact, ~10-12 rows max
-    max_rows = min(12, max(4, n // 8))
-    cols = max(4, -(-n // max_rows))  # ceil division
-    rows = -(-n // cols)
-
-    # Status chars
-    def cell(qi: int) -> Text:
-        is_current = (qi == current_idx)
-        qid = questions[qi]["id"]
-        st = history.get(qid)
-        if is_current:
-            return Text("▸", style="bold cyan")
-        if st == "correct":
-            return Text("✓", style="green")
-        if st == "wrong":
-            return Text("✗", style="red")
-        return Text("·", style="dim")
-
-    # Build grid as a Table
-    grid = Table(show_header=False, box=None, padding=0)
-    for _ in range(cols):
-        grid.add_column(justify="center", width=1)
-
-    for r in range(rows):
-        row_cells = []
-        for c in range(cols):
-            qi = r * cols + c
-            if qi < n:
-                row_cells.append(cell(qi))
-            else:
-                row_cells.append(Text(""))
-        grid.add_row(*row_cells)
-
-    # Progress bar
-    correct_n = sum(1 for i, q in enumerate(questions) if i <= current_idx and history.get(q["id"]) == "correct")
-    pct = int(100 * correct_n / n) if n else 0
-    bar_len = cols
-    filled = int(bar_len * (current_idx + 1) / n) if n else 0
-    bar = Text("█" * filled, style="green") + Text("░" * (bar_len - filled), style="dim")
-
-    # Compose full sidebar
-    sidebar = Table(show_header=False, box=None, padding=(0, 1))
-    sidebar.add_column()
-
-    sidebar.add_row(Panel(grid, title="[bold]Minimap[/bold]", border_style="cyan", padding=(0, 1)))
-    sidebar.add_row(bar)
-    sidebar.add_row(Text(f"{current_idx + 1}/{n}  {pct}% ok", style="bold"))
-    sidebar.add_row(Text("✓ok  ✗wrong  ▸now", style="dim"))
-
-    return sidebar
-
-
-def ask_question(q: dict, idx: int, total: int,
-                 questions: list[dict] | None = None,
-                 history: dict | None = None):
+def ask_question(q: dict, idx: int, total: int):
     """Render one question on a clean screen, arrow-select answer, return answer key."""
     console.clear()
-
-    # Build header line
-    header_parts = [f"Q{idx}/{total}"]
+    header_parts = [f"[bold cyan]Q{idx}/{total}[/bold cyan]"]
     if q.get("chapter_title"):
-        header_parts.append(q["chapter_title"])
+        header_parts.append(f"[dim]{q['chapter_title']}[/dim]")
     if q.get("number") is not None:
-        header_parts.append(f"#{q['number']}")
-    header_text = "  ".join(header_parts)
-
-    # Build right column (minimap) if available
-    sidebar = None
-    if questions and history is not None:
-        sidebar = build_minimap_rich(questions, history, idx - 1)
-
-    # Render question + minimap side-by-side
-    if sidebar:
-        left = Table(show_header=False, box=None, padding=0, expand=True)
-        left.add_column()
-        left.add_row(Rule(header_text, style="cyan"))
-        left.add_row(Text(""))
-        left.add_row(Text(q["question"], style="bold white"))
-        left.add_row(Text(""))
-        left.add_row(Text("Up/Down to choose, Enter to confirm, q to quit", style="dim"))
-
-        layout = Table(show_header=False, box=None, padding=(0, 2), expand=True)
-        layout.add_column(ratio=3)
-        layout.add_column(ratio=1, max_width=28)
-        layout.add_row(left, sidebar)
-        _raw_console.print(layout, width=min(MAX_WIDTH, _raw_console.width))
-    else:
-        console.print(Rule(header_text, style="cyan"))
-        console.print()
-        console.print(Text(q["question"], style="bold white"))
-        console.print()
-        console.print("[dim]Up/Down to choose, Enter to confirm, q to quit[/dim]")
-
+        header_parts.append(f"[dim]#{q['number']}[/dim]")
+    console.print(Rule("  ".join(header_parts), style="cyan"))
+    console.print()
+    console.print(Text(q["question"], style="bold white"))
+    console.print()
+    console.print("[dim]Up/Down to choose, Enter to confirm, q to quit[/dim]")
     console.print()
 
     option_keys = sorted(q["options"].keys())
@@ -485,7 +396,7 @@ def run_quiz(questions: list[dict], history: dict, history_path: Path):
     correct_n = wrong_n = 0
 
     for i, q in enumerate(questions, 1):
-        ans = ask_question(q, i, total, questions=questions, history=history)
+        ans = ask_question(q, i, total)
         if ans == "QUIT":
             break
         if feedback(q, ans):

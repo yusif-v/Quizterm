@@ -14,7 +14,6 @@ Works with any certification, exam, or self-study question set.
 - One question per page — clean screen, question, answer, feedback, next
 - Wrong answers show explanation, then Press Enter to continue
 - Correct answers auto-advance to the next question
-- Question minimap sidebar — visual grid (correct/wrong/unseen) + progress bar
 - Margins + max-width capping for readability on wide terminals
 - Validates question files before starting, with helpful errors
 
