@@ -38,6 +38,7 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
 import termios
 import tty
@@ -439,11 +440,13 @@ def ask_question(q: dict, idx: int, total: int,
             term_rows, term_cols = 24, 80
         minimap = build_minimap(questions, history, idx - 1, term_rows, term_cols)
         if minimap:
-            map_width = max(len(line) for line in minimap)  # visual width estimate
+            # Measure visual width by stripping ANSI escape sequences
+            ansi_strip = re.compile(r'\x1b\[[0-9;]*m')
+            map_width = max(len(ansi_strip.sub('', line)) for line in minimap)
             start_col = term_cols - map_width - 2
             if start_col > 40:  # only draw if enough room
                 for i, line in enumerate(minimap):
-                    # Move to row i+1 (top area), column start_col
+                    # Move to row i+2 (below top border), column start_col
                     sys.stdout.write(f"\033[{i + 2};{start_col}H{line}")
                 sys.stdout.flush()
 
