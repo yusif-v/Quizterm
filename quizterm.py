@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 import termios
@@ -287,24 +288,37 @@ def arrow_select(options: list[tuple[str, str]]) -> int:
     """
     selected = 0
     n = len(options)
+    indent = " " * MARGIN
+
+    # Figure out usable width for label truncation (avoid wrapping)
+    try:
+        cols = os.get_terminal_size().columns
+    except OSError:
+        cols = 80
+    max_label = cols - MARGIN - 6  # indent + "  " + key + ". " + some slack
+
+    def fmt_line(i: int) -> str:
+        key, label = options[i]
+        text = f"{key}. {label}"
+        if len(text) > max_label:
+            text = text[:max_label - 1] + "~"
+        if i == selected:
+            return f"{indent}  \033[7m {text} \033[0m"  # reverse video
+        return f"{indent}    {text}"
 
     def render():
-        lines = []
-        for i, (key, label) in enumerate(options):
-            if i == selected:
-                lines.append(f"  [bold reverse] {key}. {label} [/bold reverse]")
-            else:
-                lines.append(f"    {key}. {label}")
-        _raw_console.print("\x1b[A" * (n), end="")  # move cursor up n lines
-        for line in lines:
-            _raw_console.print(line)
+        """Clear the option block and reprint with current selection."""
+        for _ in range(n):
+            sys.stdout.write("\x1b[A\x1b[2K\r")
+        sys.stdout.flush()
+        for i in range(n):
+            sys.stdout.write(fmt_line(i) + "\n")
+        sys.stdout.flush()
 
     # Print initial options
-    for i, (key, label) in enumerate(options):
-        if i == selected:
-            _raw_console.print(f"  [bold reverse] {key}. {label} [/bold reverse]")
-        else:
-            _raw_console.print(f"    {key}. {label}")
+    for i in range(n):
+        sys.stdout.write(fmt_line(i) + "\n")
+    sys.stdout.flush()
 
     while True:
         key = _read_key()
