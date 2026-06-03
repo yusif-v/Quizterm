@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Quizterm — exam-agnostic terminal quiz bot.  v0.2.0
+"""Quizterm — exam-agnostic terminal quiz bot.  v0.3.0
 
 Usage:
     quizterm                       # loads ./questions.json
@@ -38,6 +38,8 @@ import argparse
 import json
 import random
 import sys
+import termios
+import tty
 from pathlib import Path
 
 from rich.console import Console
@@ -150,32 +152,31 @@ def banner(title: str, n_questions: int):
 
 
 def pick_mode(has_chapters: bool):
-    table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column(style="bold yellow")
-    table.add_column()
-    table.add_row("1.", "All questions")
+    labels = ["All questions"]
+    keys = ["1"]
     if has_chapters:
-        table.add_row("2.", "By chapter / group")
-    table.add_row("3.", "Random N questions")
-    table.add_row("4.", "Wrong answers only (from history)")
-    table.add_row("5.", "Show stats")
-    table.add_row("q.", "Quit")
-    console.print(Panel(table, title="[bold]Mode[/bold]", border_style="cyan"))
-    choices = ["1", "3", "4", "5", "q"]
-    if has_chapters:
-        choices.insert(1, "2")
-    return ask("Choose", choices=choices, default="1")
+        labels.append("By chapter / group")
+        keys.append("2")
+    labels += ["Random N questions", "Wrong answers only (from history)", "Show stats", "Quit"]
+    keys += ["3", "4", "5", "q"]
+
+    console.print(Panel("[bold]Select mode[/bold]", border_style="cyan"))
+    console.print("[dim]Up/Down to choose, Enter to confirm[/dim]")
+    console.print()
+
+    options = [(k, label) for k, label in zip(keys, labels)]
+    sel = arrow_select(options)
+    return keys[sel]
 
 
 def pick_chapter(chapters: list[tuple[str, str]]):
-    table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column(style="bold yellow")
-    table.add_column()
-    for i, (_, title) in enumerate(chapters, 1):
-        table.add_row(str(i), title)
-    console.print(Panel(table, title="[bold]Chapter[/bold]", border_style="cyan"))
-    choice = ask("Chapter", choices=[str(i) for i in range(1, len(chapters) + 1)])
-    return chapters[int(choice) - 1][0]
+    console.print(Panel("[bold]Select chapter[/bold]", border_style="cyan"))
+    console.print("[dim]Up/Down to choose, Enter to confirm[/dim]")
+    console.print()
+
+    options = [(str(i), title) for i, (_, title) in enumerate(chapters, 1)]
+    sel = arrow_select(options)
+    return chapters[sel][0]
 
 
 def select_questions(mode: str, all_qs: list[dict], history: dict,
@@ -254,8 +255,71 @@ def show_stats(all_qs: list[dict], history: dict,
     console.print(table)
 
 
+# ---------- Arrow-key selector ----------
+
+def _read_key() -> str:
+    """Read a single keypress. Returns 'up', 'down', 'enter', or the literal char."""
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+        if ch == "\x1b":
+            ch2 = sys.stdin.read(1)
+            if ch2 == "[":
+                ch3 = sys.stdin.read(1)
+                if ch3 == "A":
+                    return "up"
+                if ch3 == "B":
+                    return "down"
+            return "esc"
+        if ch in ("\r", "\n"):
+            return "enter"
+        return ch
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def arrow_select(options: list[tuple[str, str]]) -> int:
+    """Interactive arrow-key menu. Returns index of chosen option.
+
+    options: list of (key, label) pairs, e.g. [("A", "3"), ("B", "4"), ...]
+    """
+    selected = 0
+    n = len(options)
+
+    def render():
+        lines = []
+        for i, (key, label) in enumerate(options):
+            if i == selected:
+                lines.append(f"  [bold reverse] {key}. {label} [/bold reverse]")
+            else:
+                lines.append(f"    {key}. {label}")
+        _raw_console.print("\x1b[A" * (n), end="")  # move cursor up n lines
+        for line in lines:
+            _raw_console.print(line)
+
+    # Print initial options
+    for i, (key, label) in enumerate(options):
+        if i == selected:
+            _raw_console.print(f"  [bold reverse] {key}. {label} [/bold reverse]")
+        else:
+            _raw_console.print(f"    {key}. {label}")
+
+    while True:
+        key = _read_key()
+        if key == "up":
+            selected = (selected - 1) % n
+            render()
+        elif key == "down":
+            selected = (selected + 1) % n
+            render()
+        elif key == "enter":
+            return selected
+
+
 def ask_question(q: dict, idx: int, total: int):
-    """Render one question on a clean screen and return the answer key."""
+    """Render one question on a clean screen, arrow-select answer, return answer key."""
     console.clear()
     header_parts = [f"[bold cyan]Q{idx}/{total}[/bold cyan]"]
     if q.get("chapter_title"):
@@ -266,20 +330,20 @@ def ask_question(q: dict, idx: int, total: int):
     console.print()
     console.print(Text(q["question"], style="bold white"))
     console.print()
-
-    option_keys = sorted(q["options"].keys())
-    for letter in option_keys:
-        console.print(f"  [bold yellow]{letter}.[/bold yellow] {q['options'][letter]}")
+    console.print("[dim]Up/Down to choose, Enter to confirm[/dim]")
     console.print()
 
-    accepted = option_keys + [k.lower() for k in option_keys] + ["s", "S", "q", "Q"]
-    accepted_keys = "/".join(option_keys)
-    answer = ask(
-        f"[bold]Your answer[/bold] ({accepted_keys}, s=skip, q=quit)",
-        choices=accepted,
-        show_choices=False,
-    ).upper()
-    return answer
+    option_keys = sorted(q["options"].keys())
+    options = [(k, q["options"][k]) for k in option_keys]
+
+    sel = arrow_select(options)
+    return option_keys[sel]
+
+
+def press_enter():
+    """Block until Enter is pressed."""
+    _raw_console.print("[dim]Press Enter to continue[/dim]")
+    _read_key()  # wait for enter
 
 
 def feedback(q: dict, answer: str) -> bool:
@@ -311,26 +375,17 @@ def run_quiz(questions: list[dict], history: dict, history_path: Path):
     questions = list(questions)
     random.shuffle(questions)
     total = len(questions)
-    correct_n = wrong_n = skipped_n = 0
-    quit_early = False
+    correct_n = wrong_n = 0
 
     for i, q in enumerate(questions, 1):
         ans = ask_question(q, i, total)
-        if ans == "Q":
-            quit_early = True
-            break
-        if ans == "S":
-            skipped_n += 1
-            feedback(q, ans)
-            ask("[dim]Press Enter for next question[/dim]", default="")
-            continue
         if feedback(q, ans):
             correct_n += 1
             history[q["id"]] = "correct"
         else:
             wrong_n += 1
             history[q["id"]] = "wrong"
-            ask("[dim]Press Enter for next question[/dim]", default="")
+            press_enter()
         save_history(history_path, history)
 
     answered = correct_n + wrong_n
@@ -340,12 +395,8 @@ def run_quiz(questions: list[dict], history: dict, history_path: Path):
     summary = Text()
     summary.append("  Correct:  ", style="dim"); summary.append(f"{correct_n}\n", style="bold green")
     summary.append("  Wrong:    ", style="dim"); summary.append(f"{wrong_n}\n", style="bold red")
-    if skipped_n:
-        summary.append("  Skipped:  ", style="dim"); summary.append(f"{skipped_n}\n", style="bold yellow")
     summary.append("  Score:    ", style="dim"); summary.append(f"{pct}%", style="bold cyan")
     console.print(Panel(summary, border_style="cyan"))
-    if quit_early:
-        console.print("[dim]Quit early — progress saved.[/dim]")
 
 
 # ---------- Entry point ----------
@@ -443,15 +494,16 @@ def main(argv: list[str] | None = None):
             return
         if mode == "5":
             show_stats(questions, history, chapters)
-            ask("\n[dim]Press Enter to continue[/dim]", default="")
+            press_enter()
             continue
         selected = select_questions(mode, questions, history, chapters)
         if not selected:
-            ask("\n[dim]Press Enter to continue[/dim]", default="")
+            press_enter()
             continue
         run_quiz(selected, history, hpath)
-        again = ask("\nPlay again", choices=["y", "n"], default="y")
-        if again == "n":
+        console.print()
+        sel = arrow_select([("y", "Play again"), ("n", "Quit")])
+        if sel == 1:
             console.print("[dim]Bye![/dim]")
             return
 
