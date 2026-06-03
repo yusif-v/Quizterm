@@ -401,7 +401,7 @@ def ask_question(q: dict, idx: int, total: int,
     """Render one question on a clean screen, arrow-select answer, return answer key."""
     console.clear()
 
-    # Build left column content
+    # Build header line
     header_parts = [f"Q{idx}/{total}"]
     if q.get("chapter_title"):
         header_parts.append(q["chapter_title"])
@@ -409,37 +409,34 @@ def ask_question(q: dict, idx: int, total: int,
         header_parts.append(f"#{q['number']}")
     header_text = "  ".join(header_parts)
 
-    left = Table(show_header=False, box=None, padding=0, expand=True)
-    left.add_column()
-    left.add_row(Rule(header_text, style="cyan"))
-    left.add_row(Text(""))
-    left.add_row(Text(q["question"], style="bold white"))
-    left.add_row(Text(""))
-    left.add_row(Text("Up/Down to choose, Enter to confirm, q to quit", style="dim"))
-    left.add_row(Text(""))
-
     # Build right column (minimap) if available
+    sidebar = None
     if questions and history is not None:
         sidebar = build_minimap_rich(questions, history, idx - 1)
-    else:
-        sidebar = None
 
-    # Render side-by-side
+    # Render question + minimap side-by-side
     if sidebar:
+        left = Table(show_header=False, box=None, padding=0, expand=True)
+        left.add_column()
+        left.add_row(Rule(header_text, style="cyan"))
+        left.add_row(Text(""))
+        left.add_row(Text(q["question"], style="bold white"))
+        left.add_row(Text(""))
+        left.add_row(Text("Up/Down to choose, Enter to confirm, q to quit", style="dim"))
+
         layout = Table(show_header=False, box=None, padding=(0, 2), expand=True)
         layout.add_column(ratio=3)
         layout.add_column(ratio=1, max_width=28)
         layout.add_row(left, sidebar)
         _raw_console.print(layout, width=min(MAX_WIDTH, _raw_console.width))
     else:
-        for line in left.rows:
-            pass  # just print left directly
         console.print(Rule(header_text, style="cyan"))
         console.print()
         console.print(Text(q["question"], style="bold white"))
         console.print()
         console.print("[dim]Up/Down to choose, Enter to confirm, q to quit[/dim]")
-        console.print()
+
+    console.print()
 
     option_keys = sorted(q["options"].keys())
     options = [(k, q["options"][k]) for k in option_keys]
