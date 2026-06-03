@@ -38,7 +38,6 @@ import argparse
 import json
 import os
 import random
-import re
 import sys
 import termios
 import tty
@@ -335,85 +334,65 @@ def arrow_select(options: list[tuple[str, str]]) -> int:
             return -1  # quit sentinel
 
 
-def build_minimap(questions: list[dict], history: dict, current_idx: int,
-                  term_rows: int, term_cols: int) -> list[str]:
-    """Build the minimap sidebar as a list of raw ANSI strings (one per visual line).
+def build_minimap_rich(questions: list[dict], history: dict, current_idx: int) -> Table | None:
+    """Build the minimap sidebar as a Rich Table.
 
-    Returns lines ready to write to stdout at a given column offset.
-    Each question = one cell: correct=✓, wrong=✗, unseen=·, current=▸
+    Compact grid of question statuses + progress bar + legend.
     """
     n = len(questions)
     if n == 0:
-        return []
+        return None
 
-    # Minimap dimensions — compact, fixed max height
-    max_grid_rows = min(12, max(4, term_rows // 3))  # cap at 12 rows
-    cols = max(1, int(n / max_grid_rows) + (1 if n % max_grid_rows else 0))  # ceil(n / rows)
-    cols = min(cols, (term_cols // 4) - 2)  # don't exceed ~1/4 terminal width
-    cols = max(8, cols)
-    rows = max(1, int(n / cols) + (1 if n % cols else 0))  # actual rows needed
-    # Trim rows to what we actually fill (no empty rows at bottom)
-    rows = min(rows, max_grid_rows)
+    # Grid sizing: compact, ~10-12 rows max
+    max_rows = min(12, max(4, n // 8))
+    cols = max(4, -(-n // max_rows))  # ceil division
+    rows = -(-n // cols)
 
-    # Calculate grid layout: fill columns first, then rows
-    cells_per_page = rows * cols
-    if cells_per_page == 0:
-        return []
-
-    # Find which page current question is on
-    current_page = current_idx // cells_per_page
-    page_start = current_page * cells_per_page
-    page_end = min(page_start + cells_per_page, n)
-
-    # Status lookup in shuffled order
-    def status_char(qi: int) -> tuple[str, str]:
-        """Return (char, ansi_style) for question at shuffled index qi."""
+    # Status chars
+    def cell(qi: int) -> Text:
         is_current = (qi == current_idx)
         qid = questions[qi]["id"]
-        if is_current:
-            return "▸", "\033[1;36m"  # bold cyan
         st = history.get(qid)
+        if is_current:
+            return Text("▸", style="bold cyan")
         if st == "correct":
-            return "✓", "\033[32m"   # green
+            return Text("✓", style="green")
         if st == "wrong":
-            return "✗", "\033[31m"   # red
-        return "·", "\033[90m"       # dim gray
+            return Text("✗", style="red")
+        return Text("·", style="dim")
 
-    reset = "\033[0m"
-    lines = []
+    # Build grid as a Table
+    grid = Table(show_header=False, box=None, padding=0)
+    for _ in range(cols):
+        grid.add_column(justify="center", width=1)
 
-    # Top border
-    lines.append("\033[36m┌" + "─" * cols + "┐" + reset)
-
-    # Grid rows
     for r in range(rows):
-        row_str = "\033[36m│" + reset
+        row_cells = []
         for c in range(cols):
-            qi = page_start + r * cols + c
-            if qi < page_end:
-                ch, style = status_char(qi)
-                row_str += f"{style}{ch}{reset}"
+            qi = r * cols + c
+            if qi < n:
+                row_cells.append(cell(qi))
             else:
-                row_str += " "
-        row_str += "\033[36m│" + reset
-        lines.append(row_str)
-
-    # Bottom border
-    lines.append("\033[36m└" + "─" * cols + "┘" + reset)
+                row_cells.append(Text(""))
+        grid.add_row(*row_cells)
 
     # Progress bar
-    answered = sum(1 for q in questions[:current_idx + 1] if history.get(q["id"]) in ("correct", "wrong"))
-    correct_n = sum(1 for q in questions[:current_idx + 1] if history.get(q["id"]) == "correct")
+    correct_n = sum(1 for i, q in enumerate(questions) if i <= current_idx and history.get(q["id"]) == "correct")
     pct = int(100 * correct_n / n) if n else 0
+    bar_len = cols
+    filled = int(bar_len * (current_idx + 1) / n) if n else 0
+    bar = Text("█" * filled, style="green") + Text("░" * (bar_len - filled), style="dim")
 
-    bar_full = cols
-    filled = int(bar_full * (current_idx + 1) / n) if n else 0
-    bar = "\033[32m" + "█" * filled + "\033[90m" + "░" * (bar_full - filled) + reset
+    # Compose full sidebar
+    sidebar = Table(show_header=False, box=None, padding=(0, 1))
+    sidebar.add_column()
 
-    lines.append(f" {bar}")
-    lines.append(f" \033[1m{current_idx + 1}\033[0m/\033[1m{n}\033[0m  \033[32m{pct}%\033[0m \033[90mcorrect\033[0m")
+    sidebar.add_row(Panel(grid, title="[bold]Minimap[/bold]", border_style="cyan", padding=(0, 1)))
+    sidebar.add_row(bar)
+    sidebar.add_row(Text(f"{current_idx + 1}/{n}  {pct}% ok", style="bold"))
+    sidebar.add_row(Text("✓ok  ✗wrong  ▸now", style="dim"))
 
-    return lines
+    return sidebar
 
 
 def ask_question(q: dict, idx: int, total: int,
@@ -421,36 +400,46 @@ def ask_question(q: dict, idx: int, total: int,
                  history: dict | None = None):
     """Render one question on a clean screen, arrow-select answer, return answer key."""
     console.clear()
-    header_parts = [f"[bold cyan]Q{idx}/{total}[/bold cyan]"]
-    if q.get("chapter_title"):
-        header_parts.append(f"[dim]{q['chapter_title']}[/dim]")
-    if q.get("number") is not None:
-        header_parts.append(f"[dim]#{q['number']}[/dim]")
-    console.print(Rule("  ".join(header_parts), style="cyan"))
-    console.print()
-    console.print(Text(q["question"], style="bold white"))
-    console.print()
-    console.print("[dim]Up/Down to choose, Enter to confirm, q to quit[/dim]")
-    console.print()
 
-    # Draw minimap on the right side
+    # Build left column content
+    header_parts = [f"Q{idx}/{total}"]
+    if q.get("chapter_title"):
+        header_parts.append(q["chapter_title"])
+    if q.get("number") is not None:
+        header_parts.append(f"#{q['number']}")
+    header_text = "  ".join(header_parts)
+
+    left = Table(show_header=False, box=None, padding=0, expand=True)
+    left.add_column()
+    left.add_row(Rule(header_text, style="cyan"))
+    left.add_row(Text(""))
+    left.add_row(Text(q["question"], style="bold white"))
+    left.add_row(Text(""))
+    left.add_row(Text("Up/Down to choose, Enter to confirm, q to quit", style="dim"))
+    left.add_row(Text(""))
+
+    # Build right column (minimap) if available
     if questions and history is not None:
-        try:
-            ts = os.get_terminal_size()
-            term_rows, term_cols = ts.lines, ts.columns
-        except OSError:
-            term_rows, term_cols = 24, 80
-        minimap = build_minimap(questions, history, idx - 1, term_rows, term_cols)
-        if minimap:
-            # Measure visual width by stripping ANSI escape sequences
-            ansi_strip = re.compile(r'\x1b\[[0-9;]*m')
-            map_width = max(len(ansi_strip.sub('', line)) for line in minimap)
-            start_col = term_cols - map_width - 2
-            if start_col > 40:  # only draw if enough room
-                for i, line in enumerate(minimap):
-                    # Move to row i+2 (below top border), column start_col
-                    sys.stdout.write(f"\033[{i + 2};{start_col}H{line}")
-                sys.stdout.flush()
+        sidebar = build_minimap_rich(questions, history, idx - 1)
+    else:
+        sidebar = None
+
+    # Render side-by-side
+    if sidebar:
+        layout = Table(show_header=False, box=None, padding=(0, 2), expand=True)
+        layout.add_column(ratio=3)
+        layout.add_column(ratio=1, max_width=28)
+        layout.add_row(left, sidebar)
+        _raw_console.print(layout, width=min(MAX_WIDTH, _raw_console.width))
+    else:
+        for line in left.rows:
+            pass  # just print left directly
+        console.print(Rule(header_text, style="cyan"))
+        console.print()
+        console.print(Text(q["question"], style="bold white"))
+        console.print()
+        console.print("[dim]Up/Down to choose, Enter to confirm, q to quit[/dim]")
+        console.print()
 
     option_keys = sorted(q["options"].keys())
     options = [(k, q["options"][k]) for k in option_keys]
