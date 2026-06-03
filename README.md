@@ -10,7 +10,9 @@ Works with any certification, exam, or self-study question set.
 - Five modes — all / by chapter / random N / wrong-answers-only / stats
 - Per-chapter performance table (correct/wrong/unseen + score %)
 - Persistent history per question file — quit anytime, resume later
-- Color-coded feedback panels with explanations on wrong answers
+- One question per page — clean screen, question, answer, feedback, next
+- Wrong answers show explanation, then Press Enter to continue
+- Correct answers auto-advance to the next question
 - Margins + max-width capping for readability on wide terminals
 - Validates question files before starting, with helpful errors
 

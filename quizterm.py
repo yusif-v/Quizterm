@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Quizterm — exam-agnostic terminal quiz bot.
+"""Quizterm — exam-agnostic terminal quiz bot.  v0.2.0
 
 Usage:
     quizterm                       # loads ./questions.json
@@ -255,7 +255,8 @@ def show_stats(all_qs: list[dict], history: dict,
 
 
 def ask_question(q: dict, idx: int, total: int):
-    console.print()
+    """Render one question on a clean screen and return the answer key."""
+    console.clear()
     header_parts = [f"[bold cyan]Q{idx}/{total}[/bold cyan]"]
     if q.get("chapter_title"):
         header_parts.append(f"[dim]{q['chapter_title']}[/dim]")
@@ -281,11 +282,12 @@ def ask_question(q: dict, idx: int, total: int):
     return answer
 
 
-def feedback(q: dict, answer: str):
+def feedback(q: dict, answer: str) -> bool:
+    """Show feedback panel. Returns True if correct."""
     correct = q["correct"]
     if answer == correct:
         console.print(Panel(
-            f"[bold green]✓ Correct![/bold green]  [dim]({correct}. {q['options'][correct]})[/dim]",
+            f"[bold green]Correct![/bold green]  [dim]({correct}. {q['options'][correct]})[/dim]",
             border_style="green",
         ))
         return True
@@ -300,7 +302,7 @@ def feedback(q: dict, answer: str):
     if q.get("explanation"):
         body.append("\n")
         body.append(q["explanation"], style="white")
-    title = "[bold red]✗ Skipped[/bold red]" if answer == "S" else "[bold red]✗ Incorrect[/bold red]"
+    title = "[bold red]Skipped[/bold red]" if answer == "S" else "[bold red]Incorrect[/bold red]"
     console.print(Panel(body, title=title, border_style="red"))
     return False
 
@@ -320,6 +322,7 @@ def run_quiz(questions: list[dict], history: dict, history_path: Path):
         if ans == "S":
             skipped_n += 1
             feedback(q, ans)
+            ask("[dim]Press Enter for next question[/dim]", default="")
             continue
         if feedback(q, ans):
             correct_n += 1
@@ -327,10 +330,11 @@ def run_quiz(questions: list[dict], history: dict, history_path: Path):
         else:
             wrong_n += 1
             history[q["id"]] = "wrong"
+            ask("[dim]Press Enter for next question[/dim]", default="")
         save_history(history_path, history)
 
     answered = correct_n + wrong_n
-    console.print()
+    console.clear()
     console.print(Rule("Session complete", style="cyan"))
     pct = int(100 * correct_n / answered) if answered else 0
     summary = Text()
