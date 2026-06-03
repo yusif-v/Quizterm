@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Quizterm — exam-agnostic terminal quiz bot.  v0.3.0
+"""Quizterm — exam-agnostic terminal quiz bot.  v0.3.1
 
 Usage:
     quizterm                       # loads ./questions.json
@@ -330,6 +330,8 @@ def arrow_select(options: list[tuple[str, str]]) -> int:
             render()
         elif key == "enter":
             return selected
+        elif key in ("q", "Q"):
+            return -1  # quit sentinel
 
 
 def ask_question(q: dict, idx: int, total: int):
@@ -344,15 +346,14 @@ def ask_question(q: dict, idx: int, total: int):
     console.print()
     console.print(Text(q["question"], style="bold white"))
     console.print()
-    console.print("[dim]Up/Down to choose, Enter to confirm[/dim]")
+    console.print("[dim]Up/Down to choose, Enter to confirm, q to quit[/dim]")
     console.print()
 
     option_keys = sorted(q["options"].keys())
     options = [(k, q["options"][k]) for k in option_keys]
-    options.append(("q", "Quit"))
 
     sel = arrow_select(options)
-    if sel == len(option_keys):
+    if sel == -1:
         return "QUIT"
     return option_keys[sel]
 
