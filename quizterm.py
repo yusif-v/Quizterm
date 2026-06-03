@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Quizterm — exam-agnostic terminal quiz bot.  v0.3.1
+"""Quizterm — exam-agnostic terminal quiz bot.  v0.3.2
 
 Usage:
     quizterm                       # loads ./questions.json
@@ -334,7 +334,88 @@ def arrow_select(options: list[tuple[str, str]]) -> int:
             return -1  # quit sentinel
 
 
-def ask_question(q: dict, idx: int, total: int):
+def build_minimap(questions: list[dict], history: dict, current_idx: int,
+                  term_rows: int, term_cols: int) -> list[str]:
+    """Build the minimap sidebar as a list of raw ANSI strings (one per visual line).
+
+    Returns lines ready to write to stdout at a given column offset.
+    Each question = one cell: correct=✓, wrong=✗, unseen=·, current=▸
+    """
+    n = len(questions)
+    if n == 0:
+        return []
+
+    # Minimap dimensions
+    map_width = min(20, max(12, (term_cols // 6)))  # ~1/6 of terminal width
+    # Reserve rows: top border + grid rows + bottom border + progress bar (2 lines)
+    available_rows = max(4, term_rows - 6)  # leave room for header/prompt at top
+    cols = max(1, map_width - 2)           # inner width (minus borders)
+    rows = max(1, available_rows - 4)      # inner height (minus borders + progress)
+
+    # Calculate grid layout: fill columns first, then rows
+    cells_per_page = rows * cols
+    if cells_per_page == 0:
+        return []
+
+    # Find which page current question is on
+    current_page = current_idx // cells_per_page
+    page_start = current_page * cells_per_page
+    page_end = min(page_start + cells_per_page, n)
+
+    # Status lookup in shuffled order
+    def status_char(qi: int) -> tuple[str, str]:
+        """Return (char, ansi_style) for question at shuffled index qi."""
+        is_current = (qi == current_idx)
+        qid = questions[qi]["id"]
+        if is_current:
+            return "▸", "\033[1;36m"  # bold cyan
+        st = history.get(qid)
+        if st == "correct":
+            return "✓", "\033[32m"   # green
+        if st == "wrong":
+            return "✗", "\033[31m"   # red
+        return "·", "\033[90m"       # dim gray
+
+    reset = "\033[0m"
+    lines = []
+
+    # Top border
+    lines.append("\033[36m┌" + "─" * cols + "┐" + reset)
+
+    # Grid rows
+    for r in range(rows):
+        row_str = "\033[36m│" + reset
+        for c in range(cols):
+            qi = page_start + r * cols + c
+            if qi < page_end:
+                ch, style = status_char(qi)
+                row_str += f"{style}{ch}{reset}"
+            else:
+                row_str += " "
+        row_str += "\033[36m│" + reset
+        lines.append(row_str)
+
+    # Bottom border
+    lines.append("\033[36m└" + "─" * cols + "┘" + reset)
+
+    # Progress bar
+    answered = sum(1 for q in questions[:current_idx + 1] if history.get(q["id"]) in ("correct", "wrong"))
+    correct_n = sum(1 for q in questions[:current_idx + 1] if history.get(q["id"]) == "correct")
+    pct = int(100 * correct_n / n) if n else 0
+
+    bar_full = cols
+    filled = int(bar_full * (current_idx + 1) / n) if n else 0
+    bar = "\033[32m" + "█" * filled + "\033[90m" + "░" * (bar_full - filled) + reset
+
+    lines.append(f" {bar}")
+    lines.append(f" \033[1m{current_idx + 1}\033[0m/\033[1m{n}\033[0m  \033[32m{pct}%\033[0m \033[90mcorrect\033[0m")
+
+    return lines
+
+
+def ask_question(q: dict, idx: int, total: int,
+                 questions: list[dict] | None = None,
+                 history: dict | None = None):
     """Render one question on a clean screen, arrow-select answer, return answer key."""
     console.clear()
     header_parts = [f"[bold cyan]Q{idx}/{total}[/bold cyan]"]
@@ -348,6 +429,23 @@ def ask_question(q: dict, idx: int, total: int):
     console.print()
     console.print("[dim]Up/Down to choose, Enter to confirm, q to quit[/dim]")
     console.print()
+
+    # Draw minimap on the right side
+    if questions and history is not None:
+        try:
+            ts = os.get_terminal_size()
+            term_rows, term_cols = ts.lines, ts.columns
+        except OSError:
+            term_rows, term_cols = 24, 80
+        minimap = build_minimap(questions, history, idx - 1, term_rows, term_cols)
+        if minimap:
+            map_width = max(len(line) for line in minimap)  # visual width estimate
+            start_col = term_cols - map_width - 2
+            if start_col > 40:  # only draw if enough room
+                for i, line in enumerate(minimap):
+                    # Move to row i+1 (top area), column start_col
+                    sys.stdout.write(f"\033[{i + 2};{start_col}H{line}")
+                sys.stdout.flush()
 
     option_keys = sorted(q["options"].keys())
     options = [(k, q["options"][k]) for k in option_keys]
@@ -396,7 +494,7 @@ def run_quiz(questions: list[dict], history: dict, history_path: Path):
     correct_n = wrong_n = 0
 
     for i, q in enumerate(questions, 1):
-        ans = ask_question(q, i, total)
+        ans = ask_question(q, i, total, questions=questions, history=history)
         if ans == "QUIT":
             break
         if feedback(q, ans):
