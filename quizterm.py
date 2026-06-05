@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Quizterm — exam-agnostic terminal quiz bot.  v0.3.1
+"""Quizterm — exam-agnostic terminal quiz bot.  v0.3.2
 
 Usage:
     quizterm                       # loads ./questions.json
@@ -43,7 +43,7 @@ import termios
 import tty
 from pathlib import Path
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.padding import Padding
 from rich.panel import Panel
 from rich.prompt import Prompt
@@ -51,6 +51,9 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 from rich.align import Align
+
+
+EXAM_SIZE = 30
 
 
 MARGIN = 6
@@ -158,8 +161,10 @@ def pick_mode(has_chapters: bool):
     if has_chapters:
         labels.append("By chapter / group")
         keys.append("2")
-    labels += ["Random N questions", "Wrong answers only (from history)", "Show stats", "Quit"]
-    keys += ["3", "4", "5", "q"]
+    labels += [f"Exam ({EXAM_SIZE} random)", "Random N questions",
+               "Wrong answers only (from history)",
+               "Practice (skip correct)", "Show stats", "Quit"]
+    keys += ["e", "3", "4", "5", "6", "q"]
 
     console.print(Panel("[bold]Select mode[/bold]", border_style="cyan"))
     console.print("[dim]Up/Down to choose, Enter to confirm[/dim]")
@@ -182,6 +187,9 @@ def pick_chapter(chapters: list[tuple[str, str]]):
 
 def select_questions(mode: str, all_qs: list[dict], history: dict,
                      chapters: list[tuple[str, str]]):
+    if mode == "e":
+        n = min(EXAM_SIZE, len(all_qs))
+        return random.sample(all_qs, n)
     if mode == "1":
         return list(all_qs)
     if mode == "2":
@@ -203,6 +211,16 @@ def select_questions(mode: str, all_qs: list[dict], history: dict,
             console.print("[green]No wrong answers in history. Take some quizzes first![/green]")
             return []
         console.print(f"[dim]{len(wrong)} previously wrong + {len(unseen)} unseen[/dim]")
+        return pool
+    if mode == "5":
+        # Practice: skip questions already answered correctly
+        correct_ids = {qid for qid, status in history.items() if status == "correct"}
+        pool = [q for q in all_qs if q["id"] not in correct_ids]
+        if not pool:
+            console.print("[green]All questions mastered! Nothing left to practice.[/green]")
+            return []
+        skipped = len(all_qs) - len(pool)
+        console.print(f"[dim]Skipping {skipped} correct — {len(pool)} to practice[/dim]")
         return pool
     return []
 
@@ -334,28 +352,207 @@ def arrow_select(options: list[tuple[str, str]]) -> int:
             return -1  # quit sentinel
 
 
-def ask_question(q: dict, idx: int, total: int):
-    """Render one question on a clean screen, arrow-select answer, return answer key."""
-    console.clear()
+def _term_size() -> tuple[int, int]:
+    """Return (columns, rows), falling back to 80×24."""
+    try:
+        sz = os.get_terminal_size()
+        return sz.columns, sz.lines
+    except OSError:
+        return 80, 24
+
+
+def _wrap_text(text: str, width: int) -> list[str]:
+    """Simple word-wrap: return list of lines that fit within `width`."""
+    lines: list[str] = []
+    for paragraph in text.split("\n"):
+        if not paragraph:
+            lines.append("")
+            continue
+        words = paragraph.split(" ")
+        cur = ""
+        for w in words:
+            if len(cur) + len(w) + 1 > width:
+                if cur:
+                    lines.append(cur)
+                # Handle single words longer than width
+                while len(w) > width:
+                    lines.append(w[:width])
+                    w = w[width:]
+                cur = w
+            else:
+                cur = cur + " " + w if cur else w
+        if cur:
+            lines.append(cur)
+    return lines
+
+
+def build_map(total: int, current: int, results: dict[int, str]):
+    """Right-side question map. Returns a Rich renderable."""
+    if total <= 30:
+        ncols = 3
+    elif total <= 60:
+        ncols = 4
+    else:
+        ncols = 5
+
+    grid = Table.grid(padding=(0, 1))
+    for _ in range(ncols):
+        grid.add_column(justify="right")
+
+    row: list[Text] = []
+    for i in range(total):
+        num = f"{i + 1:>2}"
+        if i == current:
+            cell = Text(f"{num}▶", style="bold cyan reverse")
+        elif results.get(i) == "correct":
+            cell = Text(f"{num}✓", style="green")
+        elif results.get(i) == "wrong":
+            cell = Text(f"{num}✗", style="red")
+        else:
+            cell = Text(f"{num}·", style="dim")
+        row.append(cell)
+        if len(row) == ncols:
+            grid.add_row(*row)
+            row = []
+    if row:
+        while len(row) < ncols:
+            row.append(Text(""))
+        grid.add_row(*row)
+
+    seen = sum(1 for v in results.values() if v in ("correct", "wrong"))
+    correct_n = sum(1 for v in results.values() if v == "correct")
+    footer = Text(f"\n{correct_n}/{seen} ✓  ({total - seen} left)", style="dim")
+    return Panel(Group(grid, footer), title="Map", border_style="dim", padding=(0, 1))
+
+
+def ask_question(q: dict, idx: int, total: int,
+                 results: dict[int, str] | None = None):
+    """Render one question on a clean screen, arrow-select answer, return answer key.
+
+    Handles small terminals by wrapping text and scrolling the viewport so the
+    selected option is always visible.
+    """
+    results = results or {}
+    cols, rows = _term_size()
+    # Map column width: ~5 chars per cell + padding + panel borders
+    if total <= 30:
+        map_w = 22
+    elif total <= 60:
+        map_w = 28
+    else:
+        map_w = 34
+    show_map = cols >= (map_w + 40) and total > 1
+    # Padding(grid, (0, MARGIN)) adds 2*MARGIN; grid padding=(0,2) adds 2 on each
+    # side of each column (4 between, 2 outer each = 8 total when 2 cols).
+    if show_map:
+        usable_w = cols - 2 * MARGIN - map_w - 8
+    else:
+        usable_w = cols - 2 * MARGIN - 2
+
+    # --- Build header ---
     header_parts = [f"[bold cyan]Q{idx}/{total}[/bold cyan]"]
     if q.get("chapter_title"):
         header_parts.append(f"[dim]{q['chapter_title']}[/dim]")
     if q.get("number") is not None:
         header_parts.append(f"[dim]#{q['number']}[/dim]")
-    console.print(Rule("  ".join(header_parts), style="cyan"))
-    console.print()
-    console.print(Text(q["question"], style="bold white"))
-    console.print()
-    console.print("[dim]Up/Down to choose, Enter to confirm, q to quit[/dim]")
-    console.print()
 
+    # --- Wrap question text ---
+    q_lines = _wrap_text(q["question"], usable_w)
+
+    # --- Build wrapped options ---
     option_keys = sorted(q["options"].keys())
-    options = [(k, q["options"][k]) for k in option_keys]
+    # Each option: list of wrapped lines (first line includes the key prefix)
+    wrapped_opts: list[list[str]] = []
+    for k in option_keys:
+        label = f"{k}. {q['options'][k]}"
+        wrapped_opts.append(_wrap_text(label, usable_w))
 
-    sel = arrow_select(options)
-    if sel == -1:
-        return "QUIT"
-    return option_keys[sel]
+    # --- Layout budget ---
+    # Fixed overhead: header rule (2) + blank (1) + hint (1) + blank before hint (1) = 5
+    # Reserve at least 1 line per option (collapsed) so user can see all choices
+    fixed_overhead = 6  # rule + blank + hint + blank + margins
+    min_opt_lines = len(option_keys)  # at least 1 line per option
+    max_q_lines = rows - fixed_overhead - min_opt_lines
+    if max_q_lines < 2:
+        max_q_lines = 2  # always show at least 2 lines of question
+
+    if len(q_lines) > max_q_lines:
+        q_lines = q_lines[:max_q_lines - 1]
+        q_lines.append("...")
+
+    # --- Render with viewport scrolling ---
+    n_opts = len(option_keys)
+    selected = 0
+
+    def render():
+        console.clear()
+        parts: list = []
+        parts.append(Rule("  ".join(header_parts), style="cyan"))
+        parts.append(Text(""))
+        for l in q_lines:
+            parts.append(Text(l))
+        parts.append(Text(""))
+
+        avail = rows - fixed_overhead - len(q_lines)
+        flat: list[tuple[int, str]] = []
+        for oi, olines in enumerate(wrapped_opts):
+            for l in olines:
+                flat.append((oi, l))
+
+        sel_start = sum(len(wrapped_opts[i]) for i in range(selected))
+
+        if len(flat) <= avail:
+            show_start, show_end = 0, len(flat)
+        else:
+            half = avail // 2
+            show_start = max(0, sel_start - half)
+            show_end = show_start + avail
+            if show_end > len(flat):
+                show_end = len(flat)
+                show_start = max(0, show_end - avail)
+
+        if show_start > 0:
+            parts.append(Text("  ↑ more above", style="dim"))
+        for fi in range(show_start, show_end):
+            oi, l = flat[fi]
+            if oi == selected:
+                parts.append(Text(f"  {l} ", style="reverse"))
+            else:
+                parts.append(Text(f"    {l}"))
+        if show_end < len(flat):
+            parts.append(Text("  ↓ more below", style="dim"))
+
+        parts.append(Text(""))
+        parts.append(Text("Up/Down to choose, Enter to confirm, q to quit",
+                          style="dim"))
+
+        left = Group(*parts)
+
+        if show_map:
+            right = build_map(total, idx - 1, results)
+            grid = Table.grid(padding=(0, 2))
+            grid.add_column(ratio=1)
+            grid.add_column(width=map_w)
+            grid.add_row(left, right)
+            _raw_console.print(Padding(grid, (0, MARGIN)))
+        else:
+            _raw_console.print(Padding(left, (0, MARGIN)))
+        sys.stdout.flush()
+
+    render()
+
+    while True:
+        key = _read_key()
+        if key == "up":
+            selected = (selected - 1) % n_opts
+            render()
+        elif key == "down":
+            selected = (selected + 1) % n_opts
+            render()
+        elif key == "enter":
+            return option_keys[selected]
+        elif key in ("q", "Q"):
+            return "QUIT"
 
 
 def press_enter():
@@ -394,16 +591,19 @@ def run_quiz(questions: list[dict], history: dict, history_path: Path):
     random.shuffle(questions)
     total = len(questions)
     correct_n = wrong_n = 0
+    results: dict[int, str] = {}
 
     for i, q in enumerate(questions, 1):
-        ans = ask_question(q, i, total)
+        ans = ask_question(q, i, total, results)
         if ans == "QUIT":
             break
         if feedback(q, ans):
             correct_n += 1
+            results[i - 1] = "correct"
             history[q["id"]] = "correct"
         else:
             wrong_n += 1
+            results[i - 1] = "wrong"
             history[q["id"]] = "wrong"
             press_enter()
         save_history(history_path, history)
@@ -512,7 +712,7 @@ def main(argv: list[str] | None = None):
         if mode == "q":
             console.print("[dim]Bye![/dim]")
             return
-        if mode == "5":
+        if mode == "6":
             show_stats(questions, history, chapters)
             press_enter()
             continue
